@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import puppeteer from "puppeteer";
+import puppeteer, { ElementHandle } from "puppeteer";
 import path from "path";
 import { promises as fs } from "fs";
 
@@ -46,7 +46,7 @@ const opts = program.opts();
     const allErrorLogs: string[][] = [];
 
     const browser = await puppeteer.launch({
-      headless: false,
+      headless: process.env.HEADLESS === 'true',
       userDataDir,
       args: [
         "--no-sandbox",
@@ -61,6 +61,7 @@ const opts = program.opts();
         waitUntil: ["load", "networkidle2"],
       }
     );
+    await new Promise((res) => setTimeout(res, 2500));
     console.log("Current url", page.url());
     if (page.url().includes("Login.aspx")) {
       console.log("Logging in");
@@ -93,7 +94,7 @@ const opts = program.opts();
         `https://start.exactonline.be/docs/XMLUpload.aspx?ui=1&Topic=GLTransactions&_Division_=${EXACT_DIVISION}`,
         { waitUntil: ["load", "networkidle2"] }
       );
-      const fileInput = await page.$("#txtFile");
+      const fileInput: ElementHandle<HTMLInputElement> = await page.$("#txtFile") as any;
       await fileInput!.uploadFile(fullPath);
       console.log("Uploading", filepath);
       await page.click("#btnImport");
