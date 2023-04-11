@@ -34,6 +34,8 @@ const opts = program.opts();
     const contents = (await fs.readdir(opts.dir)).filter((x) =>
       x.endsWith(".xml")
     );
+    
+    if (!contents.length) throw new Error("No files");
 
     console.log(
       "Uploading",
