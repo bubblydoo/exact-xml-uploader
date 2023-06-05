@@ -86,6 +86,11 @@ const opts = program.opts();
         await page.waitForNavigation();
       }
     }
+    await new Promise((res) => setTimeout(res, 1000));
+    console.log("Current url", page.url());
+    if (page.url().includes("Login.aspx")) {
+      throw new Error("Failed to login");
+    }
     console.log("Logged in");
 
     const date = new Date().toISOString();
