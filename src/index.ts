@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import puppeteer, { ElementHandle } from "puppeteer";
+import puppeteer, { ElementHandle, Page } from "puppeteer";
 import path from "path";
 import { promises as fs } from "fs";
 
@@ -23,6 +23,7 @@ program.parse(process.argv);
 const opts = program.opts();
 
 (async () => {
+  let page: Page;
   const userDataDir = path.resolve(opts.tmpDir, "cache", "user-data-dir");
   await fs.mkdir(userDataDir, { recursive: true });
   const screenshotsDir = path.resolve(opts.tmpDir, "screenshots");
@@ -55,7 +56,7 @@ const opts = program.opts();
         "--disable-dev-shm-usage", // <-- add this one
       ],
     });
-    const page = await browser.newPage();
+    page = await browser.newPage();
     console.log("Going to login page");
     await page.goto(
       "https://start.exactonline.be/docs/Login.aspx?Language=EN",
@@ -169,12 +170,15 @@ const opts = program.opts();
   };
 
   try {
-    upload();
+    await upload();
   } catch (e: any) {
     console.error(e);
     if (e?.message?.includes("Navigation")) {
-      upload();
+      await upload();
     } else {
+      await page!?.screenshot({
+        path: path.resolve(screenshotsDir, `error-${new Date().toISOString()}.png`),
+      });
       throw e;
     }
   }
