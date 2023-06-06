@@ -26,8 +26,9 @@ const opts = program.opts();
   let page: Page;
   const userDataDir = path.resolve(opts.tmpDir, "cache", "user-data-dir");
   await fs.mkdir(userDataDir, { recursive: true });
-  const screenshotsDir = path.resolve(opts.tmpDir, "screenshots");
-  const errorLogsDir = path.resolve(opts.tmpDir, "error-logs");
+  const today = new Date().toISOString().split("T")[0];
+  const screenshotsDir = path.resolve(opts.tmpDir, "screenshots", today);
+  const errorLogsDir = path.resolve(opts.tmpDir, "error-logs", today);
   await fs.mkdir(screenshotsDir, { recursive: true });
   await fs.mkdir(errorLogsDir, { recursive: true });
 
@@ -137,7 +138,10 @@ const opts = program.opts();
               return resp.text().then((text) => {
                 const doc = new DOMParser().parseFromString(text, 'text/xml');
                 const body = doc.querySelector('body')!.innerHTML.replace(/&gt;/g, '>').replace(/&lt;/g, '<');
-                const xml = new DOMParser().parseFromString(body, 'text/xml')
+                const xml = new DOMParser().parseFromString(body, 'text/xml');
+                if (!xml.querySelector('GLTransaction') || !xml.querySelector('Journal')) {
+                  return 'unknown';
+                }
                 const entry = xml.querySelector('GLTransaction')!.getAttribute('entry')!;
                 const journalCode = xml.querySelector('Journal')!.getAttribute('code')!;
                 return `${journalCode}-${entry}`;
