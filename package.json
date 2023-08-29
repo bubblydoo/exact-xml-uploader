@@ -16,6 +16,7 @@
   },
   "dependencies": {
     "commander": "^9.4.1",
+    "otpauth": "^9.1.4",
     "puppeteer": "^19.4.0"
   }
 }

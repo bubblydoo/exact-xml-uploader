@@ -2,9 +2,11 @@ import { Command } from "commander";
 import puppeteer, { ElementHandle, Page } from "puppeteer";
 import path from "path";
 import { promises as fs } from "fs";
+import { URI as otpAuthUri } from "otpauth";
 
 const USERNAME = process.env.USERNAME;
 const PASSWORD = process.env.PASSWORD;
+const OTP_URI = process.env.OTP_URI;
 const EXACT_DIVISION = process.env.EXACT_DIVISION;
 
 if (!USERNAME || !PASSWORD || !EXACT_DIVISION) {
@@ -69,7 +71,8 @@ const opts = program.opts();
     console.log("Current url", page.url());
     if (page.url().includes("Login.aspx")) {
       console.log("Logging in");
-      if (!opts.otp) throw new Error("Not logged in, needs --otp");
+      const otp = opts.otp ?? (OTP_URI ? otpAuthUri.parse(OTP_URI).generate() : null);
+      if (!otp) throw new Error("Not logged in, needs --otp or OTP_URI");
       await page.waitForSelector("#LoginForm_UserName");
       await page.focus("#LoginForm_UserName");
       await page.keyboard.type(USERNAME);
@@ -83,7 +86,7 @@ const opts = program.opts();
         await page.waitForSelector("#LoginForm_Input_Key");
         await page.click("#LoginForm_RememberDevice");
         await page.focus("#LoginForm_Input_Key");
-        await page.keyboard.type(opts.otp);
+        await page.keyboard.type(otp);
         await page.keyboard.press("Enter");
         await page.waitForNavigation();
       }
