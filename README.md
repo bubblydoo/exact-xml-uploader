@@ -17,3 +17,13 @@ EXACT_DIVISION="123456" # you can find this in the url of Exact Online after log
 ```
 
 After upload, you can find error logs and screenshots in the `tmp` folder.
+
+## Troubleshooting
+
+#### `Topic [GLTransactions] Property 'VATCode' of business component 'GLTransactionVATLine' is mandatory.`
+
+This means the VAT code doesn't exist in Exact Online.
+
+#### `Topic [GLTransactions] Not allowed: Currency`
+
+The journal doesn't support the currency.
