@@ -106,7 +106,7 @@ const opts = program.opts();
         `https://start.exactonline.be/docs/XMLUpload.aspx?ui=1&Topic=GLTransactions&_Division_=${EXACT_DIVISION}`,
         { waitUntil: ["load", "networkidle2"] }
       );
-      const fileInput: ElementHandle<HTMLInputElement> = await page.$("#txtFile") as any;
+      const fileInput: ElementHandle<HTMLInputElement> = await page.$("#txtFile_Upload") as any;
       await fileInput!.uploadFile(fullPath);
       console.log("Uploading", filepath);
       await page.click("#btnImport");
