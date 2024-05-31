@@ -8,9 +8,30 @@ const USERNAME = process.env.USERNAME;
 const PASSWORD = process.env.PASSWORD;
 const OTP_URI = process.env.OTP_URI;
 const EXACT_DIVISION = process.env.EXACT_DIVISION;
+const LOGIN_MODE = process.env.LOGIN_MODE;
+const LOGIN_URL = process.env.LOGIN_URL;
 
-if (!USERNAME || !PASSWORD || !EXACT_DIVISION) {
-  throw new Error("Need env vars");
+if (LOGIN_MODE === 'manual') {
+  if (!EXACT_DIVISION || !LOGIN_URL) {
+    throw new Error("Need EXACT_DIVISION env var");
+  }
+} else {
+  if (!USERNAME || !PASSWORD || !EXACT_DIVISION) {
+    throw new Error("Need USERNAME, PASSWORD and EXACT_DIVISION env vars");
+  }
+}
+
+const keypress = async () => {
+  process.stdin.setRawMode(true)
+  return new Promise<void>(resolve => process.stdin.once('data', data => {
+    const byteArray = [...data]
+    if (byteArray.length > 0 && byteArray[0] === 3) {
+      console.log('^C')
+      process.exit(1)
+    }
+    process.stdin.setRawMode(false)
+    resolve()
+  }))
 }
 
 const program = new Command();
@@ -61,41 +82,49 @@ const opts = program.opts();
     });
     page = await browser.newPage();
     console.log("Going to login page");
-    await page.goto(
-      "https://start.exactonline.be/docs/Login.aspx?Language=EN",
-      {
+    if (LOGIN_MODE === 'manual') {
+      await page.goto(LOGIN_URL!, {
         waitUntil: ["load", "networkidle2"],
-      }
-    );
-    await new Promise((res) => setTimeout(res, 2500));
-    console.log("Current url", page.url());
-    if (page.url().includes("Login.aspx")) {
-      console.log("Logging in");
-      const otp = opts.otp ?? (OTP_URI ? otpAuthUri.parse(OTP_URI).generate() : null);
-      if (!otp) throw new Error("Not logged in, needs --otp or OTP_URI");
-      await page.waitForSelector("[name='LoginForm$UserName']");
-      await page.focus("[name='LoginForm$UserName']");
-      await page.keyboard.type(USERNAME);
-      await page.keyboard.press("Enter");
-      await page.waitForSelector("[name='LoginForm$Password']");
-      await page.focus("[name='LoginForm$Password']");
-      await page.keyboard.type(PASSWORD);
-      await page.keyboard.press("Enter");
-      await page.waitForNavigation();
-      if (page.url().includes("Totp")) {
-        await page.waitForSelector("[name='LoginForm$Input$Key']");
-        await page.click("[name='LoginForm$RememberDevice']");
-        await page.focus("[name='LoginForm$Input$Key']");
-        await page.keyboard.type(otp);
+      });
+      console.log("Please login and press any key to continue");
+      await keypress();
+    } else {
+      await page.goto(
+        "https://start.exactonline.be/docs/Login.aspx?Language=EN",
+        {
+          waitUntil: ["load", "networkidle2"],
+        }
+      );
+      await new Promise((res) => setTimeout(res, 2500));
+      console.log("Current url", page.url());
+      if (page.url().includes("Login.aspx")) {
+        console.log("Logging in");
+        const otp = opts.otp ?? (OTP_URI ? otpAuthUri.parse(OTP_URI).generate() : null);
+        if (!otp) throw new Error("Not logged in, needs --otp or OTP_URI");
+        await page.waitForSelector("[name='LoginForm$UserName']");
+        await page.focus("[name='LoginForm$UserName']");
+        await page.keyboard.type(USERNAME!);
+        await page.keyboard.press("Enter");
+        await page.waitForSelector("[name='LoginForm$Password']");
+        await page.focus("[name='LoginForm$Password']");
+        await page.keyboard.type(PASSWORD!);
         await page.keyboard.press("Enter");
         await page.waitForNavigation();
+        if (page.url().includes("Totp")) {
+          await page.waitForSelector("[name='LoginForm$Input$Key']");
+          await page.click("[name='LoginForm$RememberDevice']");
+          await page.focus("[name='LoginForm$Input$Key']");
+          await page.keyboard.type(otp);
+          await page.keyboard.press("Enter");
+          await page.waitForNavigation();
+        }
+      }
+      await new Promise((res) => setTimeout(res, 1000));
+      if (page.url().includes("Login.aspx")) {
+        throw new Error("Failed to login");
       }
     }
-    await new Promise((res) => setTimeout(res, 1000));
     console.log("Current url", page.url());
-    if (page.url().includes("Login.aspx")) {
-      throw new Error("Failed to login");
-    }
     console.log("Logged in");
 
     const date = new Date().toISOString();
@@ -126,7 +155,8 @@ const opts = program.opts();
         (el) => ((el as any).value = "250")
       );
       await page.click("#List_Show");
-      await page.waitForNavigation();
+      // await page.waitForNavigation();
+      await new Promise((res) => setTimeout(res, 2000));
       const errorRows = await page.evaluate(() => {
         return Promise.all(Array.from(
           document.querySelectorAll("#List_TableBody tr[class^=Data]")
