@@ -4,19 +4,22 @@
   "description": "Uploads an XML file to Exact Online",
   "repository": "https://github.com/bubblydoo/exact-xml-uploader.git",
   "scripts": {
-    "upload": "ts-node src/index.ts",
-    "print-puppeteer-plist-path": "ts-node src/print-puppeteer-plist-path.ts"
+    "upload": "tsx src/index.ts",
+    "print-puppeteer-plist-path": "tsx src/print-puppeteer-plist-path.ts"
   },
   "keywords": [],
   "author": "Hans Otto Wirtz <hansottowirtz@gmail.com>",
   "license": "MIT",
   "devDependencies": {
-    "ts-node": "^10.9.1",
-    "typescript": "^4.9.4"
+    "@types/node": "^20.14.0",
+    "tsx": "^4.11.2",
+    "typescript": "^5.4.5"
   },
   "dependencies": {
-    "commander": "^9.4.1",
-    "otpauth": "^9.1.4",
-    "puppeteer": "^22.3.0"
+    "commander": "^12.1.0",
+    "kleur": "^4.1.5",
+    "otpauth": "^9.3.0",
+    "puppeteer": "^22.3.0",
+    "radash": "^12.1.0"
   }
 }
