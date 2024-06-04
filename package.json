@@ -4,7 +4,8 @@
   "description": "Uploads an XML file to Exact Online",
   "repository": "https://github.com/bubblydoo/exact-xml-uploader.git",
   "scripts": {
-    "upload": "tsx src/index.ts",
+    "upload": "tsx src/index.ts upload",
+    "login": "tsx src/index.ts login",
     "print-puppeteer-plist-path": "tsx src/print-puppeteer-plist-path.ts"
   },
   "keywords": [],

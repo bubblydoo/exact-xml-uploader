@@ -38,31 +38,46 @@ const keypress = async () => {
   );
 };
 
+const __dirname = path.dirname(new URL(import.meta.url).pathname);
+const root = path.resolve(__dirname, "..");
+
 const program = new Command();
 
 program
-  .option("--login-only", "login only")
-  .requiredOption("--dir <dir>", "xmls directory path")
+  .command("upload")
+  .argument("<dir>", "xmls directory path")
   .option("--otp <otp>", "one-time password")
-  .requiredOption("--tmp-dir <tmpDir>", "tmp directory path");
+  .option("--tmp-dir <tmpDir>", "tmp directory path", path.resolve(root, "tmp"))
+  .action(async (dir, opts) => {
+    await main(dir, opts);
+  });
+
+program
+  .command("login")
+  .option("--otp <otp>", "one-time password")
+  .option("--tmp-dir <tmpDir>", "tmp directory path", path.resolve(root, "tmp"))
+  .action(async (opts) => {
+    const userDataDir = path.resolve(opts.tmpDir, "cache", "user-data-dir");
+    const browser = await launchBrowser(userDataDir);
+    const page = await browser.newPage();
+    await login(page, () => getOtp(opts));
+    await new Promise(() => {});
+  });
 
 program.parse(process.argv);
 
-const opts = program.opts();
-
-(async () => {
+async function main(xmlsDir: string, opts: { tmpDir: string, otp?: string }) {
   let page: Page;
   const userDataDir = path.resolve(opts.tmpDir, "cache", "user-data-dir");
   await fs.mkdir(userDataDir, { recursive: true });
   const today = new Date().toISOString().split("T")[0];
   const screenshotsDir = path.resolve(opts.tmpDir, "screenshots", today);
   const errorLogsDir = path.resolve(opts.tmpDir, "error-logs", today);
-  const mode = opts.loginOnly ? "login" : "upload";
   await fs.mkdir(screenshotsDir, { recursive: true });
   await fs.mkdir(errorLogsDir, { recursive: true });
 
   const upload = async () => {
-    const contents = (await fs.readdir(opts.dir)).filter((x) => x.endsWith(".xml"));
+    const contents = (await fs.readdir(xmlsDir)).filter((x) => x.endsWith(".xml"));
 
     if (!contents.length) throw new Error("No files");
 
@@ -72,14 +87,14 @@ const opts = program.opts();
 
     const browser = await launchBrowser(userDataDir);
     const page = await browser.newPage();
-    await login(page);
+    await login(page, () => getOtp(opts));
     console.log("Current url", page.url());
     console.log("Logged in");
 
     const date = new Date().toISOString();
 
     for (const filepath of contents) {
-      const fullPath = path.resolve(opts.dir, filepath);
+      const fullPath = path.resolve(xmlsDir, filepath);
       await page.goto(
         `https://start.exactonline.be/docs/XMLUpload.aspx?ui=1&Topic=GLTransactions&_Division_=${EXACT_DIVISION}`,
         { waitUntil: ["load", "networkidle2"] }
@@ -160,14 +175,7 @@ const opts = program.opts();
   };
 
   try {
-    if (mode === "login") {
-      const browser = await launchBrowser(userDataDir);
-      page = await browser.newPage();
-      await login(page);
-      await new Promise(() => {});
-    } else if (mode === "upload") {
-      await upload();
-    }
+    await upload();
   } catch (e: any) {
     console.error("❌", e);
     if (e?.message?.includes("Navigation")) {
@@ -179,7 +187,7 @@ const opts = program.opts();
       throw e;
     }
   }
-})();
+}
 
 async function launchBrowser(userDataDir: string) {
   const browser = await puppeteer.launch({
@@ -193,7 +201,7 @@ async function launchBrowser(userDataDir: string) {
   return browser;
 }
 
-async function login(page: Page) {
+async function login(page: Page, generateOtp: () => Promise<string>) {
   console.log("Going to login page");
   if (LOGIN_MODE === "manual") {
     await page.goto(LOGIN_URL!, {
@@ -212,7 +220,7 @@ async function login(page: Page) {
     console.log("Current url", page.url());
     if (page.url().includes("Login.aspx")) {
       console.log("Logging in");
-      const otp = opts.otp ?? (OTP_URI ? otpAuthUri.parse(OTP_URI).generate() : null);
+      const otp = await generateOtp?.();
       if (!otp) throw new Error("Not logged in, needs --otp or OTP_URI");
       await page.waitForSelector("[name='LoginForm$UserName']");
       await page.focus("[name='LoginForm$UserName']");
@@ -239,6 +247,10 @@ async function login(page: Page) {
   }
 }
 
+async function getOtp(opts: { otp?: string }) {
+  return opts.otp ?? (OTP_URI ? otpAuthUri.parse(OTP_URI).generate() : null);
+}
+
 const parseErrorLine = (line: string[]) => {
   const [empty, date, code, type, entry, message, user] = line;
   // Topic [GLTransactions] Period is closed: 2023 - 4
@@ -253,7 +265,7 @@ const parseErrorLine = (line: string[]) => {
     user,
     parsedMessage: md
       ? {
-          type: md[1]?.split(":")[0].trim(),
+          type: md[1]?.split(/:| - /)[0].trim(),
         }
       : null,
   };
