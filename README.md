@@ -8,7 +8,7 @@ This is a simple tool to upload XML files to Exact Online (uses the XML Import f
 npx env-cmd -f .env -- npm run upload -- ../folder-with-xmls --otp 123456
 ```
 
-You need to make some of these environment variables available:
+You need to make some of these environment variables available (e.g. in a `.env` file):
 
 ```
 EXACT_DIVISION="123456" # you can find this in the url of Exact Online after logging in
@@ -27,6 +27,12 @@ If you just want to login:
 
 ```bash
 npx env-cmd -f .env -- npm run login
+```
+
+After logging in, you can turn on headless mode to upload files.
+
+```bash
+npx env-cmd -f .env -- npm run upload -- ../folder-with-xmls --headless
 ```
 
 ## Troubleshooting

@@ -66,15 +66,12 @@ program
     const sessionDataFile = path.resolve(opts.tmpDir, "cache", "session-data");
     const browser = await launchBrowser(userDataDir, opts.headless ?? false);
     const page = await browser.newPage();
-    await restorePageSession(page, sessionDataFile);
-    await login(page, () => getOtp(opts));
-    await savePageSession(page, sessionDataFile);
-    await new Promise(() => {});
+    await loginWithStoredSession(page, sessionDataFile, () => getOtp(opts), opts.headless ?? false);
   });
 
 program.parse(process.argv);
 
-async function main(xmlsDir: string, opts: { tmpDir: string, otp?: string, headless?: boolean }) {
+async function main(xmlsDir: string, opts: { tmpDir: string; otp?: string; headless?: boolean }) {
   let page: Page;
   const userDataDir = path.resolve(opts.tmpDir, "cache", "user-data-dir");
   const sessionDataFile = path.resolve(opts.tmpDir, "cache", "session-data");
@@ -96,74 +93,17 @@ async function main(xmlsDir: string, opts: { tmpDir: string, otp?: string, headl
 
     const browser = await launchBrowser(userDataDir, opts.headless ?? false);
     const page = await browser.newPage();
-    await restorePageSession(page, sessionDataFile);
-    await login(page, () => getOtp(opts));
-    await savePageSession(page, sessionDataFile);
+    await loginWithStoredSession(page, sessionDataFile, () => getOtp(opts), opts.headless ?? false);
     console.log("Current url", page.url());
 
     const date = new Date().toISOString();
 
     for (const filepath of contents) {
+      const logUtils = createLogUtils(page, filepath, date, screenshotsDir, errorLogsDir);
       const fullPath = path.resolve(xmlsDir, filepath);
-      await page.goto(
-        `https://start.exactonline.be/docs/XMLUpload.aspx?ui=1&Topic=GLTransactions&_Division_=${EXACT_DIVISION}`,
-        { waitUntil: ["load", "networkidle2"] }
-      );
-      const fileInput: ElementHandle<HTMLInputElement> = (await page.$("#txtFile_Upload")) as any;
-      if (!fileInput) throw new Error("No file input");
-      await fileInput!.uploadFile(fullPath);
-      console.log("⏳ Uploading", filepath);
-      await page.click("#btnImport");
-      await page.waitForNavigation({ timeout: 120000 });
-      await page.screenshot({
-        path: path.resolve(screenshotsDir, `${filepath}-${date}-errors.png`),
-      });
-      console.log("✅ Uploaded", filepath);
-      await fs.rename(fullPath, `${fullPath}.uploaded`);
-
-      await page.$eval("input[id=Messages1]", (el) => ((el as any).checked = true));
-      await page.$eval("input[id=List_ps]", (el) => ((el as any).value = "250"));
-      await page.click("#List_Show");
-      // await page.waitForNavigation();
-      await new Promise((res) => setTimeout(res, 2000));
-      const errorRows = await page.evaluate(() => {
-        return Promise.all(
-          Array.from(document.querySelectorAll("#List_TableBody tr[class^=Data]")).map((tr) =>
-            Promise.all(
-              Array.from(tr.querySelectorAll("td")).map((td) => {
-                const a: HTMLAnchorElement | null = td.querySelector("a[href^=SysAttachmentView]");
-                if (!a) return td.innerText;
-                const url = new URL(a.href);
-                const attachmentId = url.searchParams.get("AttachmentID")!;
-                const division = url.searchParams.get("_Division_")!;
-                return fetch(
-                  `https://start.exactonline.be/docs/XmlEvent.aspx?ID=${attachmentId}&_Division_=${division}`
-                ).then((resp) => {
-                  return resp.text().then((text) => {
-                    const doc = new DOMParser().parseFromString(text, "text/xml");
-                    const body = doc.querySelector("body")!.innerHTML.replace(/&gt;/g, ">").replace(/&lt;/g, "<");
-                    const xml = new DOMParser().parseFromString(body, "text/xml");
-                    if (!xml.querySelector("GLTransaction") || !xml.querySelector("Journal")) {
-                      return "unknown";
-                    }
-                    const entry = xml.querySelector("GLTransaction")!.getAttribute("entry")!;
-                    const journalCode = xml.querySelector("Journal")!.getAttribute("code")!;
-                    return `${journalCode}-${entry}`;
-                  });
-                });
-              })
-            )
-          )
-        );
-      });
+      const { errorRows } = await uploadSingleXml(page, fullPath, filepath, logUtils);
       allErrorLogs.push(...errorRows.reverse());
-      await fs.writeFile(
-        path.resolve(errorLogsDir, `${filepath}-${date}-errors.json`),
-        JSON.stringify(errorRows, null, 2)
-      );
-      await page.screenshot({
-        path: path.resolve(screenshotsDir, `${filepath}-${date}-errors.png`),
-      });
+      await logUtils.writeErrorFile("errors", errorRows);
       if (errorRows.length) {
         console.log("❌ Errors for", filepath);
         printErrorsSummary(errorRows);
@@ -199,6 +139,63 @@ async function main(xmlsDir: string, opts: { tmpDir: string, otp?: string, headl
   }
 }
 
+async function uploadSingleXml(page: Page, fullPath: string, batchName: string, logUtils: LogUtils) {
+  await page.goto(
+    `https://start.exactonline.be/docs/XMLUpload.aspx?ui=1&Topic=GLTransactions&_Division_=${EXACT_DIVISION}`,
+    { waitUntil: ["load", "networkidle2"] }
+  );
+  const fileInput: ElementHandle<HTMLInputElement> = (await page.$("#txtFile_Upload")) as any;
+  if (!fileInput) throw new Error("No file input");
+  await fileInput!.uploadFile(fullPath);
+  console.log("⏳ Uploading", batchName);
+  await page.click("#btnImport");
+  await page.waitForNavigation({ timeout: 120000 });
+  await logUtils.makeScreenshot("right-after-upload");
+  console.log("✅ Uploaded", batchName);
+  await fs.rename(fullPath, `${fullPath}.uploaded`);
+  const errorRows = await extractErrorRowsFromPage(page);
+  await logUtils.makeScreenshot("showing-all-errors");
+
+  return { errorRows };
+}
+
+async function extractErrorRowsFromPage(page: Page) {
+  await page.$eval("input[id=Messages1]", (el) => ((el as any).checked = true));
+  await page.$eval("input[id=List_ps]", (el) => ((el as any).value = "250"));
+  await page.click("#List_Show");
+  await new Promise((res) => setTimeout(res, 2000));
+  return await page.evaluate(() => {
+    return Promise.all(
+      Array.from(document.querySelectorAll("#List_TableBody tr[class^=Data]")).map((tr) =>
+        Promise.all(
+          Array.from(tr.querySelectorAll("td")).map((td) => {
+            const a: HTMLAnchorElement | null = td.querySelector("a[href^=SysAttachmentView]");
+            if (!a) return td.innerText;
+            const url = new URL(a.href);
+            const attachmentId = url.searchParams.get("AttachmentID")!;
+            const division = url.searchParams.get("_Division_")!;
+            return fetch(
+              `https://start.exactonline.be/docs/XmlEvent.aspx?ID=${attachmentId}&_Division_=${division}`
+            ).then((resp) => {
+              return resp.text().then((text) => {
+                const doc = new DOMParser().parseFromString(text, "text/xml");
+                const body = doc.querySelector("body")!.innerHTML.replace(/&gt;/g, ">").replace(/&lt;/g, "<");
+                const xml = new DOMParser().parseFromString(body, "text/xml");
+                if (!xml.querySelector("GLTransaction") || !xml.querySelector("Journal")) {
+                  return "unknown";
+                }
+                const entry = xml.querySelector("GLTransaction")!.getAttribute("entry")!;
+                const journalCode = xml.querySelector("Journal")!.getAttribute("code")!;
+                return `${journalCode}-${entry}`;
+              });
+            });
+          })
+        )
+      )
+    );
+  });
+}
+
 async function launchBrowser(userDataDir: string, headless: boolean) {
   const browser = await puppeteer.launch({
     headless,
@@ -211,7 +208,18 @@ async function launchBrowser(userDataDir: string, headless: boolean) {
   return browser;
 }
 
-async function login(page: Page, generateOtp: () => Promise<string>) {
+async function loginWithStoredSession(
+  page: Page,
+  sessionDataFile: string,
+  generateOtp: () => Promise<string>,
+  headless: boolean
+) {
+  await restorePageSession(page, sessionDataFile);
+  await login(page, generateOtp, headless);
+  await savePageSession(page, sessionDataFile);
+}
+
+async function login(page: Page, generateOtp: () => Promise<string>, headless: boolean) {
   console.log("Going to login page");
   if (LOGIN_MODE === "manual") {
     await page.goto(LOGIN_URL!, {
@@ -219,6 +227,7 @@ async function login(page: Page, generateOtp: () => Promise<string>) {
     });
     await new Promise((res) => setTimeout(res, 1000));
     if (!page.url().includes("MenuPortal.aspx")) {
+      if (headless) throw new Error("Not logged in, please log in without headless mode");
       console.log("Please login and press any key to continue");
       await keypress();
       console.log("Pressed key");
@@ -270,6 +279,8 @@ const parseErrorLine = (line: string[]) => {
   const [empty, date, code, type, entry, message, user] = line;
   // Topic [GLTransactions] Period is closed: 2023 - 4
   // Onderwerp [GLTransactions] Bestaat reeds - Boekstuknummer: 20713, Dagboek: VKUS,
+  // Niet gevonden: Onderwerp (HRMSubscriptions)
+  // Niet gevonden: Onderwerp (Indicators)
   const md = message.match(/\] (.+)( - |:)/);
   return {
     date,
@@ -299,15 +310,14 @@ async function fileExists(filepath: string) {
   try {
     await fs.access(filepath);
     return true;
-  }
-  catch (e) {
+  } catch (e) {
     return false;
   }
 }
 
 async function restorePageSession(page: Page, sessionDataFile: string) {
   if (await fileExists(sessionDataFile)) {
-    const sessionData = await fs.readFile(sessionDataFile, "utf-8")
+    const sessionData = await fs.readFile(sessionDataFile, "utf-8");
     await page.session.restoreString(sessionData);
   }
 }
@@ -316,3 +326,21 @@ async function savePageSession(page: Page, sessionDataFile: string) {
   const sessionData = await page.session.dumpString();
   await fs.writeFile(sessionDataFile, sessionData);
 }
+
+function createLogUtils(page: Page, filepath: string, date: string, screenshotsDir: string, errorLogsDir: string) {
+  return {
+    writeErrorFile: (suffix: string, data: any) => {
+      return fs.writeFile(
+        path.resolve(errorLogsDir, `${filepath}-${date}-${suffix}.json`),
+        JSON.stringify(data, null, 2)
+      );
+    },
+    makeScreenshot: (suffix: string) => {
+      return page.screenshot({
+        path: path.resolve(screenshotsDir, `${filepath}-${date}-${suffix}.png`),
+      });
+    },
+  };
+}
+
+type LogUtils = ReturnType<typeof createLogUtils>;
