@@ -21,6 +21,8 @@
     "kleur": "^4.1.5",
     "otpauth": "^9.3.0",
     "puppeteer": "^22.3.0",
+    "puppeteer-extra": "^3.3.6",
+    "puppeteer-extra-plugin-session": "^1.0.1",
     "radash": "^12.1.0"
   }
 }

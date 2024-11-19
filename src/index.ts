@@ -1,10 +1,13 @@
 import { Command } from "commander";
-import puppeteer, { ElementHandle, Page } from "puppeteer";
+import { ElementHandle, Page } from "puppeteer";
+import puppeteer from "puppeteer-extra";
 import path from "path";
 import { promises as fs } from "fs";
 import { URI as otpAuthUri } from "otpauth";
 import { group } from "radash";
-import kleur from "kleur";
+import { SessionPlugin } from "puppeteer-extra-plugin-session";
+
+puppeteer.use(new SessionPlugin());
 
 const USERNAME = process.env.USERNAME;
 const PASSWORD = process.env.PASSWORD;
@@ -48,6 +51,7 @@ program
   .argument("<dir>", "xmls directory path")
   .option("--otp <otp>", "one-time password")
   .option("--tmp-dir <tmpDir>", "tmp directory path", path.resolve(root, "tmp"))
+  .option("--headless", "headless mode", process.env.HEADLESS === "true")
   .action(async (dir, opts) => {
     await main(dir, opts);
   });
@@ -56,19 +60,24 @@ program
   .command("login")
   .option("--otp <otp>", "one-time password")
   .option("--tmp-dir <tmpDir>", "tmp directory path", path.resolve(root, "tmp"))
+  .option("--headless", "headless mode", process.env.HEADLESS === "true")
   .action(async (opts) => {
     const userDataDir = path.resolve(opts.tmpDir, "cache", "user-data-dir");
-    const browser = await launchBrowser(userDataDir);
+    const sessionDataFile = path.resolve(opts.tmpDir, "cache", "session-data");
+    const browser = await launchBrowser(userDataDir, opts.headless ?? false);
     const page = await browser.newPage();
+    await restorePageSession(page, sessionDataFile);
     await login(page, () => getOtp(opts));
+    await savePageSession(page, sessionDataFile);
     await new Promise(() => {});
   });
 
 program.parse(process.argv);
 
-async function main(xmlsDir: string, opts: { tmpDir: string, otp?: string }) {
+async function main(xmlsDir: string, opts: { tmpDir: string, otp?: string, headless?: boolean }) {
   let page: Page;
   const userDataDir = path.resolve(opts.tmpDir, "cache", "user-data-dir");
+  const sessionDataFile = path.resolve(opts.tmpDir, "cache", "session-data");
   await fs.mkdir(userDataDir, { recursive: true });
   const today = new Date().toISOString().split("T")[0];
   const screenshotsDir = path.resolve(opts.tmpDir, "screenshots", today);
@@ -85,11 +94,12 @@ async function main(xmlsDir: string, opts: { tmpDir: string, otp?: string }) {
 
     const allErrorLogs: string[][] = [];
 
-    const browser = await launchBrowser(userDataDir);
+    const browser = await launchBrowser(userDataDir, opts.headless ?? false);
     const page = await browser.newPage();
+    await restorePageSession(page, sessionDataFile);
     await login(page, () => getOtp(opts));
+    await savePageSession(page, sessionDataFile);
     console.log("Current url", page.url());
-    console.log("Logged in");
 
     const date = new Date().toISOString();
 
@@ -189,9 +199,9 @@ async function main(xmlsDir: string, opts: { tmpDir: string, otp?: string }) {
   }
 }
 
-async function launchBrowser(userDataDir: string) {
+async function launchBrowser(userDataDir: string, headless: boolean) {
   const browser = await puppeteer.launch({
-    headless: process.env.HEADLESS === "true",
+    headless,
     userDataDir,
     args: [
       "--no-sandbox",
@@ -211,6 +221,10 @@ async function login(page: Page, generateOtp: () => Promise<string>) {
     if (!page.url().includes("MenuPortal.aspx")) {
       console.log("Please login and press any key to continue");
       await keypress();
+      console.log("Pressed key");
+    }
+    if (!page.url().includes("MenuPortal.aspx")) {
+      throw new Error("Failed to login");
     }
   } else {
     await page.goto("https://start.exactonline.be/docs/Login.aspx?Language=EN", {
@@ -245,6 +259,7 @@ async function login(page: Page, generateOtp: () => Promise<string>) {
       throw new Error("Failed to login");
     }
   }
+  console.log("Logged in");
 }
 
 async function getOtp(opts: { otp?: string }) {
@@ -279,3 +294,25 @@ const printErrorsSummary = (errors: string[][]) => {
   }
   console.log("Total errors", errors.length);
 };
+
+async function fileExists(filepath: string) {
+  try {
+    await fs.access(filepath);
+    return true;
+  }
+  catch (e) {
+    return false;
+  }
+}
+
+async function restorePageSession(page: Page, sessionDataFile: string) {
+  if (await fileExists(sessionDataFile)) {
+    const sessionData = await fs.readFile(sessionDataFile, "utf-8")
+    await page.session.restoreString(sessionData);
+  }
+}
+
+async function savePageSession(page: Page, sessionDataFile: string) {
+  const sessionData = await page.session.dumpString();
+  await fs.writeFile(sessionDataFile, sessionData);
+}
