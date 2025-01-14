@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { ElementHandle, Page } from "puppeteer";
+import { Browser, ElementHandle, Page } from "puppeteer";
 import puppeteer from "puppeteer-extra";
 import path from "path";
 import { promises as fs } from "fs";
@@ -66,7 +66,8 @@ program
     const sessionDataFile = path.resolve(opts.tmpDir, "cache", "session-data");
     const browser = await launchBrowser(userDataDir, opts.headless ?? false);
     const page = await browser.newPage();
-    await loginWithStoredSession(page, sessionDataFile, () => getOtp(opts), opts.headless ?? false);
+    await page.goto("https://captive.apple.com");
+    await loginWithStoredSession(browser, page, sessionDataFile, () => getOtp(opts), opts.headless ?? false);
   });
 
 program.parse(process.argv);
@@ -93,7 +94,8 @@ async function main(xmlsDir: string, opts: { tmpDir: string; otp?: string; headl
 
     const browser = await launchBrowser(userDataDir, opts.headless ?? false);
     const page = await browser.newPage();
-    await loginWithStoredSession(page, sessionDataFile, () => getOtp(opts), opts.headless ?? false);
+    await page.goto("https://captive.apple.com");
+    await loginWithStoredSession(browser, page, sessionDataFile, () => getOtp(opts), opts.headless ?? false);
     console.log("Current url", page.url());
 
     const date = new Date().toISOString();
@@ -139,6 +141,16 @@ async function main(xmlsDir: string, opts: { tmpDir: string; otp?: string; headl
   }
 }
 
+export function measure() {
+  const t = new Date().getTime();
+  return {
+    end() {
+      const t2 = new Date().getTime();
+      return Math.round((t2 - t) / 1000);
+    },
+  };
+}
+
 async function uploadSingleXml(page: Page, fullPath: string, batchName: string, logUtils: LogUtils) {
   await page.goto(
     `https://start.exactonline.be/docs/XMLUpload.aspx?ui=1&Topic=GLTransactions&_Division_=${EXACT_DIVISION}`,
@@ -148,10 +160,11 @@ async function uploadSingleXml(page: Page, fullPath: string, batchName: string, 
   if (!fileInput) throw new Error("No file input");
   await fileInput!.uploadFile(fullPath);
   console.log("⏳ Uploading", batchName);
+  const timer = measure();
   await page.click("#btnImport");
-  await page.waitForNavigation({ timeout: 120000 });
+  await page.waitForNavigation({ timeout: 180000 });
   await logUtils.makeScreenshot("right-after-upload");
-  console.log("✅ Uploaded", batchName);
+  console.log("✅ Uploaded", batchName, `in ${timer.end()} seconds`);
   await fs.rename(fullPath, `${fullPath}.uploaded`);
   const errorRows = await extractErrorRowsFromPage(page);
   await logUtils.makeScreenshot("showing-all-errors");
@@ -209,30 +222,66 @@ async function launchBrowser(userDataDir: string, headless: boolean) {
 }
 
 async function loginWithStoredSession(
+  browser: Browser,
   page: Page,
   sessionDataFile: string,
   generateOtp: () => Promise<string>,
   headless: boolean
 ) {
   await restorePageSession(page, sessionDataFile);
-  await login(page, generateOtp, headless);
+  await login(browser, page, generateOtp, headless);
+  page = await currentPage(browser);
   await savePageSession(page, sessionDataFile);
 }
 
-async function login(page: Page, generateOtp: () => Promise<string>, headless: boolean) {
+async function currentPage(browser: Browser) {
+  const pages = await browser.pages()
+  for (let i = 0; i < pages.length; i++) {
+      const isHidden = await pages[i].evaluate(() => document.hidden)
+      if (!isHidden) {
+        return pages[i];
+      }
+  }
+}
+
+function pagePathname(page: Page) {
+  return new URL(page.url()).pathname;
+}
+
+function poll(fn: () => Promise<boolean>, timeout: number, interval: number) {
+  const endTime = Number(new Date()) + timeout;
+  return new Promise<boolean>((resolve) => {
+    const checkCondition = async () => {
+      const result = await fn();
+      if (result) {
+        resolve(true);
+      } else if (Number(new Date()) < endTime) {
+        setTimeout(checkCondition, interval, resolve);
+      } else {
+        resolve(false);
+      }
+    };
+    checkCondition();
+  });
+}
+
+async function login(browser: Browser, defaultPage: Page, generateOtp: () => Promise<string>, headless: boolean) {
+  let page = defaultPage;
   console.log("Going to login page");
   if (LOGIN_MODE === "manual") {
     await page.goto(LOGIN_URL!, {
       waitUntil: ["load", "networkidle2"],
     });
     await new Promise((res) => setTimeout(res, 1000));
-    if (!page.url().includes("MenuPortal.aspx")) {
+    page = await currentPage(browser);
+    if (!pagePathname(page).includes("MenuPortal.aspx")) {
       if (headless) throw new Error("Not logged in, please log in without headless mode");
       console.log("Please login and press any key to continue");
       await keypress();
       console.log("Pressed key");
     }
-    if (!page.url().includes("MenuPortal.aspx")) {
+    page = await currentPage(browser);
+    if (!pagePathname(page).includes("MenuPortal.aspx")) {
       throw new Error("Failed to login");
     }
   } else {
@@ -240,8 +289,8 @@ async function login(page: Page, generateOtp: () => Promise<string>, headless: b
       waitUntil: ["load", "networkidle2"],
     });
     await new Promise((res) => setTimeout(res, 2500));
-    console.log("Current url", page.url());
-    if (page.url().includes("Login.aspx")) {
+    page = await currentPage(browser);
+    if (pagePathname(page).includes("Login.aspx")) {
       console.log("Logging in");
       const otp = await generateOtp?.();
       if (!otp) throw new Error("Not logged in, needs --otp or OTP_URI");
@@ -264,7 +313,8 @@ async function login(page: Page, generateOtp: () => Promise<string>, headless: b
       }
     }
     await new Promise((res) => setTimeout(res, 1000));
-    if (page.url().includes("Login.aspx")) {
+    page = await currentPage(browser);
+    if (pagePathname(page).includes("Login.aspx")) {
       throw new Error("Failed to login");
     }
   }
